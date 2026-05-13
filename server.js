@@ -142,7 +142,7 @@ const server = http.createServer(async (req, res) => {
 // -------------------------
 // ② /load（Git Data API で最新を返す）
 // -------------------------
-if (req.url === "/load" && req.method === "GET") {
+if (req.url.startsWith("/load") && req.method === "GET") {
 
   // 1. main の HEAD を取得
   const refRes = await fetch(
