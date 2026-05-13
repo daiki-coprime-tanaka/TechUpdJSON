@@ -2,13 +2,15 @@
 const http = require('http');
 const fetch = require('node-fetch');
 
-const OWNER = "daiki-coprime-tanaka";   // ← GitHub ユーザー名
-const REPO = "TechUpdJSON";             // ← リポジトリ名
-const FILE_PATH = "techJsonii.json";    // ← 更新したいファイル
-const TOKEN = process.env.GITHUB_TOKEN; // ← Render の環境変数に設定
+const OWNER = "daiki-coprime-tanaka";
+const REPO = "TechUpdJSON";
+const FILE_PATH = "techJsonii.json";
+const TOKEN = process.env.GITHUB_TOKEN;
+
+// ★ TOKEN が読めているか確認
+console.log("TOKEN:", TOKEN ? "OK" : "NOT FOUND");
 
 const server = http.createServer(async (req, res) => {
-  // CORS 設定
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -22,15 +24,14 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/save" && req.method === "POST") {
     let body = "";
 
-    req.on("data", chunk => {
-      body += chunk;
-    });
+    req.on("data", chunk => body += chunk);
 
     req.on("end", async () => {
       const newData = JSON.stringify(JSON.parse(body), null, 2);
 
-      // ① まず GitHub から現在のファイルの SHA を取得
       const getUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
+
+      // ★ SHA 取得
       const getRes = await fetch(getUrl, {
         headers: {
           "Authorization": `token ${TOKEN}`,
@@ -38,10 +39,22 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      const fileInfo = await getRes.json();
-      const sha = fileInfo.sha; // ← 更新には SHA が必須
+      console.log("GET status:", getRes.status);
 
-      // ② GitHub に PUT してファイルを更新
+      const fileInfo = await getRes.json();
+      console.log("GET response:", fileInfo);
+
+      if (!fileInfo.sha) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          status: "error",
+          message: "SHA が取得できませんでした",
+          detail: fileInfo
+        }));
+        return;
+      }
+
+      // ★ PUT 更新
       const updateRes = await fetch(getUrl, {
         method: "PUT",
         headers: {
@@ -52,11 +65,14 @@ const server = http.createServer(async (req, res) => {
         body: JSON.stringify({
           message: "Update JSON via API",
           content: Buffer.from(newData).toString("base64"),
-          sha: sha
+          sha: fileInfo.sha
         })
       });
 
+      console.log("PUT status:", updateRes.status);
+
       const result = await updateRes.json();
+      console.log("PUT response:", result);
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
