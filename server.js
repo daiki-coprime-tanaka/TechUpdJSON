@@ -199,7 +199,13 @@ if (req.url === "/load" && req.method === "GET") {
 
   const content = Buffer.from(blobData.content, "base64").toString("utf8");
 
-  res.writeHead(200, { "Content-Type": "application/json" });
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "Surrogate-Control": "no-store"
+  });
   res.end(content);
   return;
 }
