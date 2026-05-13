@@ -1,13 +1,11 @@
 // server.js
-const http = require('http');
-const fetch = require('node-fetch');
+const http = require("http");
+const fetch = require("node-fetch");
 
 const OWNER = "daiki-coprime-tanaka";
 const REPO = "TechUpdJSON";
 const FILE_PATH = "techJsonii.json";
 const TOKEN = process.env.GITHUB_TOKEN;
-
-console.log("TOKEN:", TOKEN ? "OK" : "NOT FOUND");
 
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -21,80 +19,140 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------
-  // ① /save（書き込み）
+  // ① /save（Git Data API で書き込み）
   // -------------------------
   if (req.url === "/save" && req.method === "POST") {
     let body = "";
-
     req.on("data", chunk => body += chunk);
 
     req.on("end", async () => {
-      const newData = JSON.stringify(JSON.parse(body), null, 2);
+      const jsonText = JSON.stringify(JSON.parse(body), null, 2);
 
-      const getUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
-
-      const getRes = await fetch(getUrl, {
-        headers: {
-          "Authorization": `token ${TOKEN}`,
-          "Accept": "application/vnd.github+json"
+      // 1. 現在の HEAD を取得
+      const refRes = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/refs/heads/main`,
+        {
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json"
+          }
         }
-      });
+      );
+      const refData = await refRes.json();
+      const latestCommitSha = refData.object.sha;
 
-      const fileInfo = await getRes.json();
+      // 2. 最新コミットの tree を取得
+      const commitRes = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/commits/${latestCommitSha}`,
+        {
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json"
+          }
+        }
+      );
+      const commitData = await commitRes.json();
+      const baseTreeSha = commitData.tree.sha;
 
-      if (!fileInfo.sha) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "error", detail: fileInfo }));
-        return;
-      }
+      // 3. blob を作成
+      const blobRes = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/blobs`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            content: jsonText,
+            encoding: "utf-8"
+          })
+        }
+      );
+      const blobData = await blobRes.json();
 
-      const updateRes = await fetch(getUrl, {
-        method: "PUT",
-        headers: {
-          "Authorization": `token ${TOKEN}`,
-          "Accept": "application/vnd.github+json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          message: "Update JSON via API",
-          content: Buffer.from(newData).toString("base64"),
-          sha: fileInfo.sha
-        })
-      });
+      // 4. 新しい tree を作成
+      const treeRes = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/trees`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            base_tree: baseTreeSha,
+            tree: [
+              {
+                path: FILE_PATH,
+                mode: "100644",
+                type: "blob",
+                sha: blobData.sha
+              }
+            ]
+          })
+        }
+      );
+      const treeData = await treeRes.json();
 
-      const result = await updateRes.json();
+      // 5. 新しい commit を作成
+      const newCommitRes = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/commits`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: "Update JSON via Git Data API",
+            tree: treeData.sha,
+            parents: [latestCommitSha]
+          })
+        }
+      );
+      const newCommitData = await newCommitRes.json();
+
+      // 6. main ブランチを新しい commit に更新
+      await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/git/refs/heads/main`,
+        {
+          method: "PATCH",
+          headers: {
+            "Authorization": `token ${TOKEN}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            sha: newCommitData.sha
+          })
+        }
+      );
 
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "success", github: result }));
+      res.end(JSON.stringify({ status: "success" }));
     });
 
     return;
   }
 
   // -------------------------
-  // ② /load（読み出し）
+  // ② /load（常に最新を返す）
   // -------------------------
   if (req.url === "/load" && req.method === "GET") {
-    const getUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
-
-    const getRes = await fetch(getUrl, {
-      headers: {
-        "Authorization": `token ${TOKEN}`,
-        "Accept": "application/vnd.github+json"
-      }
-    });
-
-    const fileInfo = await getRes.json();
-    const content = Buffer.from(fileInfo.content, "base64").toString("utf8");
+    const getRes = await fetch(
+      `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${FILE_PATH}?t=${Date.now()}`
+    );
+    const text = await getRes.text();
 
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(content);
+    res.end(text);
     return;
   }
 
-  // -------------------------
-  // ③ どれにも該当しない場合は 404
-  // -------------------------
   res.writeHead(404);
   res.end("Not Found");
 });
