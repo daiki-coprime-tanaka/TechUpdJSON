@@ -139,19 +139,70 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // -------------------------
-  // ② /load（常に最新を返す）
-  // -------------------------
-  if (req.url === "/load" && req.method === "GET") {
-    const getRes = await fetch(
-      `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/${FILE_PATH}?t=${Date.now()}`
-    );
-    const text = await getRes.text();
+// -------------------------
+// ② /load（Git Data API で最新を返す）
+// -------------------------
+if (req.url === "/load" && req.method === "GET") {
 
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(text);
-    return;
-  }
+  // 1. main の HEAD を取得
+  const refRes = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/git/refs/heads/main`,
+    {
+      headers: {
+        "Authorization": `token ${TOKEN}`,
+        "Accept": "application/vnd.github+json"
+      }
+    }
+  );
+  const refData = await refRes.json();
+  const commitSha = refData.object.sha;
+
+  // 2. commit を取得
+  const commitRes = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/git/commits/${commitSha}`,
+    {
+      headers: {
+        "Authorization": `token ${TOKEN}`,
+        "Accept": "application/vnd.github+json"
+      }
+    }
+  );
+  const commitData = await commitRes.json();
+  const treeSha = commitData.tree.sha;
+
+  // 3. tree を取得
+  const treeRes = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${treeSha}?recursive=1`,
+    {
+      headers: {
+        "Authorization": `token ${TOKEN}`,
+        "Accept": "application/vnd.github+json"
+      }
+    }
+  );
+  const treeData = await treeRes.json();
+
+  // 4. 対象ファイルの blob を探す
+  const fileEntry = treeData.tree.find(item => item.path === FILE_PATH);
+
+  // 5. blob を取得
+  const blobRes = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/git/blobs/${fileEntry.sha}`,
+    {
+      headers: {
+        "Authorization": `token ${TOKEN}`,
+        "Accept": "application/vnd.github+json"
+      }
+    }
+  );
+  const blobData = await blobRes.json();
+
+  const content = Buffer.from(blobData.content, "base64").toString("utf8");
+
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(content);
+  return;
+}
 
   res.writeHead(404);
   res.end("Not Found");
