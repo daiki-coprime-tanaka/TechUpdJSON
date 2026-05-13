@@ -7,12 +7,11 @@ const REPO = "TechUpdJSON";
 const FILE_PATH = "techJsonii.json";
 const TOKEN = process.env.GITHUB_TOKEN;
 
-// ★ TOKEN が読めているか確認
 console.log("TOKEN:", TOKEN ? "OK" : "NOT FOUND");
 
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
@@ -21,6 +20,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // -------------------------
+  // ① /save（書き込み）
+  // -------------------------
   if (req.url === "/save" && req.method === "POST") {
     let body = "";
 
@@ -31,7 +33,6 @@ const server = http.createServer(async (req, res) => {
 
       const getUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
 
-      // ★ SHA 取得
       const getRes = await fetch(getUrl, {
         headers: {
           "Authorization": `token ${TOKEN}`,
@@ -39,22 +40,14 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      console.log("GET status:", getRes.status);
-
       const fileInfo = await getRes.json();
-      console.log("GET response:", fileInfo);
 
       if (!fileInfo.sha) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          status: "error",
-          message: "SHA が取得できませんでした",
-          detail: fileInfo
-        }));
+        res.end(JSON.stringify({ status: "error", detail: fileInfo }));
         return;
       }
 
-      // ★ PUT 更新
       const updateRes = await fetch(getUrl, {
         method: "PUT",
         headers: {
@@ -69,23 +62,41 @@ const server = http.createServer(async (req, res) => {
         })
       });
 
-      console.log("PUT status:", updateRes.status);
-
       const result = await updateRes.json();
-      console.log("PUT response:", result);
 
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "success",
-        message: "GitHub に保存しました",
-        github: result
-      }));
+      res.end(JSON.stringify({ status: "success", github: result }));
     });
 
-  } else {
-    res.writeHead(404);
-    res.end("Not Found");
+    return;
   }
+
+  // -------------------------
+  // ② /load（読み出し）
+  // -------------------------
+  if (req.url === "/load" && req.method === "GET") {
+    const getUrl = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
+
+    const getRes = await fetch(getUrl, {
+      headers: {
+        "Authorization": `token ${TOKEN}`,
+        "Accept": "application/vnd.github+json"
+      }
+    });
+
+    const fileInfo = await getRes.json();
+    const content = Buffer.from(fileInfo.content, "base64").toString("utf8");
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(content);
+    return;
+  }
+
+  // -------------------------
+  // ③ どれにも該当しない場合は 404
+  // -------------------------
+  res.writeHead(404);
+  res.end("Not Found");
 });
 
 const PORT = process.env.PORT || 50000;
